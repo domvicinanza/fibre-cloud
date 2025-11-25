@@ -1,0 +1,46 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>MIDI Client</title>
+</head>
+<body>
+<h2>MIDI Client Running...</h2>
+
+<script>
+const ws = new WebSocket(
+  (location.protocol === "https:" ? "wss://" : "ws://") + location.host
+);
+
+let midiOut = null;
+
+navigator.requestMIDIAccess().then(midi => {
+  for (let output of midi.outputs.values()) { midiOut = output; break; }
+});
+
+ws.onmessage = event => {
+  const msg = JSON.parse(event.data);
+  if (msg.type === "tap" && midiOut) {
+    const x = msg.x, y = msg.y;
+    const pent = [0, 2, 4, 7, 9];
+    function midiFromX(x) {
+      const MIN = 36, MAX = 67, ROOT = 60;
+      const scale = [];
+      for (let n = MIN; n <= MAX; n++) {
+        const dist = n - ROOT;
+        const mod = ((dist % 12) + 12) % 12;
+        if (pent.includes(mod)) scale.push(n);
+      }
+      const idx = Math.floor(x * scale.length);
+      return scale[Math.max(0, Math.min(idx, scale.length - 1))];
+    }
+    const note = midiFromX(x);
+    const vel = Math.round(40 + (1-y)*80);
+    midiOut.send([0x90, note, vel]);
+    setTimeout(() => midiOut.send([0x80, note, 0]), 300);
+  }
+};
+</script>
+</body>
+</html>

@@ -1,46 +1,125 @@
-
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <title>MIDI Client</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body {
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: -apple-system, system-ui;
+    padding: 20px;
+  }
+  h1 { margin-bottom: 0; }
+  #log { white-space: pre-wrap; margin-top: 20px; font-size: 0.9rem; }
+</style>
 </head>
 <body>
-<h2>MIDI Client Running...</h2>
+
+<h1>🎹 Fibre Cloud – MIDI Client</h1>
+<p>This computer will output MIDI into Logic Pro.</p>
+
+<div id="status">Initializing…</div>
+<div id="log"></div>
 
 <script>
+const statusEl = document.getElementById("status");
+const logEl = document.getElementById("log");
+
+function log(msg) {
+  logEl.textContent += msg + "\\n";
+  console.log(msg);
+}
+
+let midiOut = null;
+
+// Select this port automatically:
+const PREFERRED_PORT = "IAC Driver FibreBus";   // <- edit if needed
+
+// ------------------------------------------------------------
+// 1. Set up Web MIDI
+// ------------------------------------------------------------
+navigator.requestMIDIAccess().then(midi => {
+  log("MIDI access granted.");
+
+  // List available outputs
+  for (let output of midi.outputs.values()) {
+    log("Found MIDI output: " + output.name);
+    if (output.name === PREFERRED_PORT) {
+      midiOut = output;
+      log("✅ Selected MIDI output: " + output.name);
+    }
+  }
+
+  if (!midiOut) {
+    log("❌ Preferred port NOT found. Using first available.");
+    midiOut = [...midi.outputs.values()][0];
+  }
+
+  if (midiOut) {
+    log("🎛 Using MIDI Output: " + midiOut.name);
+    statusEl.textContent = "Connected to MIDI: " + midiOut.name;
+  } else {
+    log("❌ No MIDI output available.");
+    statusEl.textContent = "No MIDI output available.";
+  }
+});
+
+// ------------------------------------------------------------
+// 2. Connect to WebSocket
+// ------------------------------------------------------------
 const ws = new WebSocket(
   (location.protocol === "https:" ? "wss://" : "ws://") + location.host
 );
 
-let midiOut = null;
+ws.onopen = () => {
+  log("🟢 WebSocket connected.");
+};
 
-navigator.requestMIDIAccess().then(midi => {
-  for (let output of midi.outputs.values()) { midiOut = output; break; }
-});
+ws.onclose = () => {
+  log("🔴 WebSocket disconnected.");
+};
 
+ws.onerror = err => {
+  log("❌ WebSocket error: " + err);
+};
+
+// ------------------------------------------------------------
+// 3. Receive tap events → send MIDI
+// ------------------------------------------------------------
 ws.onmessage = event => {
+  if (!midiOut) return;
+
   const msg = JSON.parse(event.data);
-  if (msg.type === "tap" && midiOut) {
-    const x = msg.x, y = msg.y;
-    const pent = [0, 2, 4, 7, 9];
-    function midiFromX(x) {
-      const MIN = 36, MAX = 67, ROOT = 60;
-      const scale = [];
-      for (let n = MIN; n <= MAX; n++) {
-        const dist = n - ROOT;
-        const mod = ((dist % 12) + 12) % 12;
-        if (pent.includes(mod)) scale.push(n);
-      }
-      const idx = Math.floor(x * scale.length);
-      return scale[Math.max(0, Math.min(idx, scale.length - 1))];
+  if (msg.type !== "tap") return;
+
+  const x = msg.x;
+  const y = msg.y;
+
+  // Pentatonic scale conversion
+  const pent = [0, 2, 4, 7, 9];
+  function midiFromX(x) {
+    const MIN = 36, MAX = 67, ROOT = 60;
+    const scale = [];
+    for (let n = MIN; n <= MAX; n++) {
+      const dist = n - ROOT;
+      const mod = ((dist % 12) + 12) % 12;
+      if (pent.includes(mod)) scale.push(n);
     }
-    const note = midiFromX(x);
-    const vel = Math.round(40 + (1-y)*80);
-    midiOut.send([0x90, note, vel]);
-    setTimeout(() => midiOut.send([0x80, note, 0]), 300);
+    const idx = Math.floor(x * scale.length);
+    return scale[Math.max(0, Math.min(idx, scale.length - 1))];
   }
+
+  const note = midiFromX(x);
+  const vel = Math.round(40 + (1 - y) * 80);
+
+  log("→ Note: " + note + " Vel: " + vel);
+
+  midiOut.send([0x90, note, vel]);
+  setTimeout(() => midiOut.send([0x80, note, 0]), 250);
 };
 </script>
 </body>
 </html>
+

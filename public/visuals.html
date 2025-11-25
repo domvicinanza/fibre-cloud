@@ -1,3 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Global Constellation – Multi-User Mode B</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: black;
+  }
+  canvas {
+    display: block;
+  }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
 
-<!-- Replace with your full Mode B visuals (global constellation) -->
-<h1 style='color:white;background:black'>Upload your visuals.html here</h1>
+<script>
+// ===== Canvas Setup =====
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
+
+// ===== Multi-user tap storage =====
+let tapsByUser = {};   // { clientId: [ {x,y,hue,time}, ... ] }
+const MAX_POINTS = 60;
+
+// ===== Nebula Ambient Background =====
+const clouds = [];
+const CLOUD_COUNT = 5;
+
+function initClouds() {
+  clouds.length = 0;
+  for (let i = 0; i < CLOUD_COUNT; i++) {
+    clouds.push({
+      x: Math.random(),
+      y: Math.random(),
+      radius: 0.25 + Math.random() * 0.35,
+      hue: 200 + Math.random() * 80,
+      alpha: 0.15 + Math.random() * 0.1,
+      dx: (Math.random() - 0.5) * 0.0006,
+      dy: (Math.random() - 0.5) * 0.0006
+    });
+  }
+}
+initClouds();
+
+function updateClouds() {
+  clouds.forEach(c => {
+    c.x += c.dx;
+    c.y += c.dy;
+    if (c.x < -0.2) c.x = 1.2;
+    if (c.x > 1.2) c.x = -0.2;
+    if (c.y < -0.2) c.y = 1.2;
+    if (c.y > 1.2) c.y = -0.2;
+  });
+}
+
+function drawNebula() {
+  const w = canvas.width;
+  const h = canvas.height;
+
+  clouds.forEach(c => {
+    const cx = c.x * w;
+    const cy = c.y * h;
+    const r = c.radius * Math.min(w, h);
+
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, `hsla(${c.hue}, 80%, 65%, ${c.alpha})`);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+// ===== Mode B: Global Constellation =====
+function drawConstellations() {
+  const now = performance.now();
+  const MAX_AGE = 9000;
+  const w = canvas.width;
+  const h = canvas.height;
+
+  // Age out old points
+  for (const clientId in tapsByUser) {
+    tapsByUser[clientId] =
+      tapsByUser[clientId].filter(p => now - p.time < MAX_AGE);
+  }
+
+  // Draw every user's constellation
+  for (const clientId in tapsByUser) {
+    const points = tapsByUser[clientId];
+    if (!points.length) continue;
+
+    const hue = points[0].hue;
+
+    // Lines
+    ctx.beginPath();
+    ctx.strokeStyle = `hsla(${hue}, 100%, 60%, 0.7)`;
+    ctx.lineWidth = 1.5;
+
+    points.forEach((p, i) => {
+      const x = p.x * w;
+      const y = p.y * h;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Stars (points)
+    points.forEach(p => {
+      const age = (now - p.time) / MAX_AGE;
+      const alpha = Math.max(0, 1 - age);
+      const radius = 2 + (1 - age) * 3;
+
+      ctx.fillStyle = `hsla(${p.hue}, 100%, 80%, ${alpha})`;
+      ctx.beginPath();
+      ctx.arc(p.x * w, p.y * h, radius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  }
+}
+
+// ===== Draw Loop =====
+function draw() {
+  const w = canvas.width;
+  const h = canvas.height;
+
+  // Light persistence fade
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.fillRect(0, 0, w, h);
+
+  updateClouds();
+  drawNebula();
+  drawConstellations();
+
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+
+// ===== WebSocket =====
+const loc = window.location;
+const proto = loc.protocol === "https:" ? "wss:" : "ws:";
+const ws = new WebSocket(proto + "//" + loc.host);
+
+ws.onmessage = event => {
+  try {
+    const msg = JSON.parse(event.data);
+    if (msg.type === "tap") {
+      const { clientId, hue, x, y } = msg;
+      if (!tapsByUser[clientId]) tapsByUser[clientId] = [];
+      tapsByUser[clientId].push({
+        x, y, hue,
+        time: performance.now()
+      });
+      if (tapsByUser[clientId].length > MAX_POINTS) {
+        tapsByUser[clientId].splice(
+          0,
+          tapsByUser[clientId].length - MAX_POINTS
+        );
+      }
+    }
+  } catch (e) {}
+};
+</script>
+</body>
+</html>
+

@@ -33,60 +33,58 @@ function log(msg) {
 }
 
 let midiOut = null;
-
-// Select this port automatically:
-const PREFERRED_PORT = "IAC Driver FibreBus";   // <- edit if needed
+const PREFERRED_PORT = "IAC Driver FibreBus";  // ← change if needed
 
 // ------------------------------------------------------------
-// 1. Set up Web MIDI
+// 1. Enable WebMIDI
 // ------------------------------------------------------------
-navigator.requestMIDIAccess().then(midi => {
+navigator.requestMIDIAccess({ sysex: false })
+  .then(onMIDISuccess)
+  .catch(err => log("❌ MIDI init error: " + err));
+
+function onMIDISuccess(midi) {
   log("MIDI access granted.");
 
-  // List available outputs
+  // Find preferred output
   for (let output of midi.outputs.values()) {
-    log("Found MIDI output: " + output.name);
+    log("Found: " + output.name);
     if (output.name === PREFERRED_PORT) {
       midiOut = output;
-      log("✅ Selected MIDI output: " + output.name);
     }
   }
 
   if (!midiOut) {
-    log("❌ Preferred port NOT found. Using first available.");
+    log("❌ Preferred port not found; using first available.");
     midiOut = [...midi.outputs.values()][0];
   }
 
-  if (midiOut) {
-    log("🎛 Using MIDI Output: " + midiOut.name);
-    statusEl.textContent = "Connected to MIDI: " + midiOut.name;
-  } else {
-    log("❌ No MIDI output available.");
-    statusEl.textContent = "No MIDI output available.";
+  if (!midiOut) {
+    statusEl.textContent = "❌ No MIDI outputs available.";
+    return;
   }
-});
+
+  // ---- KEY FIX: Explicitly open the output ----
+  midiOut.open().then(() => {
+    log("🎛 Output port opened: " + midiOut.name);
+    statusEl.textContent = "Connected to MIDI: " + midiOut.name;
+  }).catch(err => {
+    log("❌ Failed to open output: " + err);
+  });
+}
 
 // ------------------------------------------------------------
-// 2. Connect to WebSocket
+// 2. WebSocket connection
 // ------------------------------------------------------------
 const ws = new WebSocket(
   (location.protocol === "https:" ? "wss://" : "ws://") + location.host
 );
 
-ws.onopen = () => {
-  log("🟢 WebSocket connected.");
-};
-
-ws.onclose = () => {
-  log("🔴 WebSocket disconnected.");
-};
-
-ws.onerror = err => {
-  log("❌ WebSocket error: " + err);
-};
+ws.onopen = () => log("🟢 WebSocket connected.");
+ws.onclose = () => log("🔴 WebSocket disconnected.");
+ws.onerror = err => log("❌ WebSocket error: " + err);
 
 // ------------------------------------------------------------
-// 3. Receive tap events → send MIDI
+// 3. Handle incoming taps → send MIDI
 // ------------------------------------------------------------
 ws.onmessage = event => {
   if (!midiOut) return;
@@ -97,8 +95,9 @@ ws.onmessage = event => {
   const x = msg.x;
   const y = msg.y;
 
-  // Pentatonic scale conversion
+  // Pentatonic mapping
   const pent = [0, 2, 4, 7, 9];
+
   function midiFromX(x) {
     const MIN = 36, MAX = 67, ROOT = 60;
     const scale = [];
@@ -114,7 +113,7 @@ ws.onmessage = event => {
   const note = midiFromX(x);
   const vel = Math.round(40 + (1 - y) * 80);
 
-  log("→ Note: " + note + " Vel: " + vel);
+  log(`→ Note ${note} Vel ${vel}`);
 
   midiOut.send([0x90, note, vel]);
   setTimeout(() => midiOut.send([0x80, note, 0]), 250);
